@@ -1,0 +1,27 @@
+{
+  "name": "brivo_backend",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@better-auth/mongo-adapter": "latest",
+    "better-auth": "latest",
+    "cors": "latest",
+    "dotenv": "latest",
+    "express": "5.0.0",
+    "mongodb": "latest",
+    "zod": "^4.3.6",
+    "zod-validation-error": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "latest",
+    "@types/express": "latest",
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}
