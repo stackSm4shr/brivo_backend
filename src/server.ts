@@ -4,6 +4,7 @@ import cors from "cors";
 import { toNodeHandler } from "better-auth/node";
 import { auth } from "./auth.js";
 import usersRouter from "./routes/users.js";
+import aiRouter from "./routes/ai.js";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -12,7 +13,7 @@ app.use(
   cors({
     origin: process.env.CORS_ORIGIN,
     credentials: true,
-  })
+  }),
 );
 
 app.all("/api/auth/*splat", toNodeHandler(auth));
@@ -24,6 +25,7 @@ app.get("/", (_req: Request, res: Response) => {
 });
 
 app.use("/api/users", usersRouter);
+app.use("/api/ai", aiRouter);
 
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
