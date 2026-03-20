@@ -5,6 +5,7 @@ import { toNodeHandler } from "better-auth/node";
 import { auth } from "./auth.js";
 import usersRouter from "./routes/users.js";
 import aiRouter from "./routes/ai.js";
+import lettersRouter from "./routes/letters.js";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -26,6 +27,7 @@ app.get("/", (_req: Request, res: Response) => {
 
 app.use("/api/users", usersRouter);
 app.use("/api/ai", aiRouter);
+app.use("/api/letters", lettersRouter);
 
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
