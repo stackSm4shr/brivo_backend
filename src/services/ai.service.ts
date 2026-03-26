@@ -1,13 +1,20 @@
 import OpenAI from "openai";
 import type { AiDocumentInput } from "../schemas/ai.schema.js";
 
+export type DeadlineItem = {
+  label: string;
+  rawText: string;
+  isoDate: string | null;
+  confidence: "high" | "medium" | "low";
+};
+
 type ExplainResult = {
   mode: "explain";
   title: string;
   summary: string;
   plainLanguageExplanation: string;
   requiredActions: string[];
-  deadlines: string[];
+  deadlines: DeadlineItem[];
   risks: string[];
 };
 
@@ -32,16 +39,23 @@ type TranslateResult = {
 export type AiResult = ExplainResult | DraftReplyResult | TranslateResult;
 
 const provider = process.env.AI_PROVIDER ?? "ollama";
-const model = process.env.AI_MODEL ?? "qwen3:8b";
+
+const model =
+  process.env.AI_MODEL ??
+  (provider === "groq" ? "openai/gpt-oss-20b" : "qwen3:8b");
+
 const baseURL =
   process.env.AI_BASE_URL ??
-  (provider === "ollama" ? "http://localhost:11434/v1" : undefined);
+  (provider === "groq"
+    ? "https://api.groq.com/openai/v1"
+    : "http://localhost:11434/v1");
+
 const apiKey =
   process.env.AI_API_KEY ??
-  (provider === "ollama" ? "ollama" : process.env.OPENAI_API_KEY);
+  (provider === "groq" ? process.env.GROQ_API_KEY : "ollama");
 
 if (!apiKey) {
-  throw new Error("Missing AI_API_KEY / OPENAI_API_KEY");
+  throw new Error("Missing AI_API_KEY / GROQ_API_KEY");
 }
 
 const client = new OpenAI({
@@ -49,155 +63,342 @@ const client = new OpenAI({
   baseURL,
 });
 
-function buildInstructions(
-  input: Pick<AiDocumentInput, "action" | "language" | "targetLanguage">,
-) {
-  const { action, targetLanguage } = input;
-
-  // decide language automatically
-  const language =
-    action === "explain"
-      ? "en"
-      : action === "draft-reply"
-      ? "de"
-      : undefined;
-
-  if (action === "explain") {
+function buildInstructions(input: AiDocumentInput) {
+  if (input.action === "explain") {
     return `
 You are an expert bureaucracy assistant.
 
-Analyze the provided document text and return strict JSON with exactly this shape:
+Your task is to explain an official letter in plain English.
+
+CRITICAL LANGUAGE RULES:
+- All output fields except "mode" MUST be written in English.
+- Do NOT write any German in title, summary, plainLanguageExplanation, requiredActions, deadlines, or risks.
+- Even if the source document is German, your explanation must be fully in English.
+- Translate quoted or paraphrased content into English.
+
+QUALITY RULES:
+- Explain official letters clearly, carefully, and conservatively.
+- Do not invent facts that are not present in the document.
+- Do not give legal guarantees.
+- Only extract deadlines that are explicitly stated or strongly implied by the letter.
+- If no deadline is present, return an empty deadlines array.
+- If a deadline is vague and cannot be normalized safely, set isoDate to null.
+- Keep rawText close to the wording in the document.
+- label should be a short English action label.
+- confidence must be one of: high, medium, low.
+- Return valid JSON only.
+
+Schema:
 {
   "mode": "explain",
-  "title": string,
-  "summary": string,
-  "plainLanguageExplanation": string,
-  "requiredActions": string[],
-  "deadlines": string[],
-  "risks": string[]
-}
-
-Rules:
-- The response language must be English.
-- Be accurate and concise.
-- Do not invent facts not present in the text.
-- If something is unclear, mention the uncertainty in summary or explanation.
-- Return JSON only.
-`.trim();
-  }
-
-  if (action === "draft-reply") {
-    return `
-You are an expert bureaucracy assistant.
-
-Read the provided document text and draft a helpful reply. Return strict JSON with exactly this shape:
-{
-  "mode": "draft-reply",
-  "title": string,
-  "intentSummary": string,
-  "suggestedReplySubject": string,
-  "suggestedReply": string,
-  "missingInformation": string[],
-  "toneNotes": string[]
-}
-
-Rules:
-- The response language must be German.
-- The suggested reply should be polite, practical, and suitable for official communication.
-- Do not fabricate case numbers, dates, names, or attachments.
-- Mention missing details in "missingInformation".
-- Return JSON only.
-`.trim();
-  }
-
-  return `
-You are an expert bureaucracy assistant.
-
-Translate the provided document text and return strict JSON with exactly this shape:
-{
-  "mode": "translate",
-  "title": string,
-  "targetLanguage": string,
-  "translatedText": string,
-  "notes": string[]
-}
-
-Rules:
-- Translate into ${targetLanguage}.
-- Preserve meaning faithfully.
-- Preserve names, dates, file references, account numbers, invoice numbers, and reference numbers exactly unless a direct translation is obviously appropriate.
-- Do not add explanations inside the translated text.
-- Use "notes" for short translator notes or warnings.
-- Return JSON only.
-`.trim();
-}
-
-function safeJsonParse<T>(value: string): T {
-  return JSON.parse(value) as T;
-}
-
-export async function analyzeDocument(input: AiDocumentInput): Promise<AiResult> {
-  const instructions = buildInstructions(input);
-
-  const response = await client.chat.completions.create({
-    model,
-    temperature: 0.2,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: instructions },
-      { role: "user", content: input.text },
-    ],
-  });
-
-  const content = response.choices[0]?.message?.content;
-
-  if (!content) {
-    throw new Error("AI returned an empty response");
-  }
-
-  const parsed = safeJsonParse<AiResult>(content);
-
-  if (input.action === "explain") {
-    if (
-      parsed.mode !== "explain" ||
-      !parsed.title ||
-      !parsed.summary ||
-      !parsed.plainLanguageExplanation ||
-      !Array.isArray(parsed.requiredActions) ||
-      !Array.isArray(parsed.deadlines) ||
-      !Array.isArray(parsed.risks)
-    ) {
-      throw new Error("AI returned an invalid explain result");
+  "title": "string",
+  "summary": "string",
+  "plainLanguageExplanation": "string",
+  "requiredActions": ["string"],
+  "deadlines": [
+    {
+      "label": "string",
+      "rawText": "string",
+      "isoDate": "string|null",
+      "confidence": "high|medium|low"
     }
-
-    return parsed;
+  ],
+  "risks": ["string"]
+}
+    `.trim();
   }
 
   if (input.action === "draft-reply") {
-    if (
-      parsed.mode !== "draft-reply" ||
-      !parsed.title ||
-      !parsed.intentSummary ||
-      !parsed.suggestedReplySubject ||
-      !parsed.suggestedReply ||
-      !Array.isArray(parsed.missingInformation) ||
-      !Array.isArray(parsed.toneNotes)
-    ) {
-      throw new Error("AI returned an invalid draft reply result");
+    const answerLanguage =
+      input.language === "de"
+        ? "Write the answer in German."
+        : "Write the answer in English.";
+
+    return `
+You are an expert bureaucracy assistant.
+Draft a polite and useful reply to an official letter.
+Do not invent personal facts, attachments, dates, promises, or legal claims.
+If information is missing, list it under missingInformation.
+Prefer a respectful and practical tone.
+${answerLanguage}
+Return valid JSON only.
+
+Schema:
+{
+  "mode": "draft-reply",
+  "title": "string",
+  "intentSummary": "string",
+  "suggestedReplySubject": "string",
+  "suggestedReply": "string",
+  "missingInformation": ["string"],
+  "toneNotes": ["string"]
+}
+    `.trim();
+  }
+
+  return `
+You are a professional translator.
+
+Translate the provided document into ${input.targetLanguage ?? "English"}.
+
+RULES:
+- Preserve meaning faithfully.
+- Keep names, IDs, addresses, and reference numbers unchanged unless they must be transliterated.
+- Do not summarize.
+- Do not explain unless needed briefly in notes.
+- Return valid JSON only.
+
+Schema:
+{
+  "mode": "translate",
+  "title": "string",
+  "targetLanguage": "string",
+  "translatedText": "string",
+  "notes": ["string"]
+}
+  `.trim();
+}
+
+function explainSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      mode: { type: "string", const: "explain" },
+      title: { type: "string" },
+      summary: { type: "string" },
+      plainLanguageExplanation: { type: "string" },
+      requiredActions: {
+        type: "array",
+        items: { type: "string" },
+      },
+      deadlines: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            label: { type: "string" },
+            rawText: { type: "string" },
+            isoDate: {
+              anyOf: [{ type: "string" }, { type: "null" }],
+            },
+            confidence: {
+              type: "string",
+              enum: ["high", "medium", "low"],
+            },
+          },
+          required: ["label", "rawText", "isoDate", "confidence"],
+        },
+      },
+      risks: {
+        type: "array",
+        items: { type: "string" },
+      },
+    },
+    required: [
+      "mode",
+      "title",
+      "summary",
+      "plainLanguageExplanation",
+      "requiredActions",
+      "deadlines",
+      "risks",
+    ],
+  };
+}
+
+function draftReplySchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      mode: { type: "string", const: "draft-reply" },
+      title: { type: "string" },
+      intentSummary: { type: "string" },
+      suggestedReplySubject: { type: "string" },
+      suggestedReply: { type: "string" },
+      missingInformation: {
+        type: "array",
+        items: { type: "string" },
+      },
+      toneNotes: {
+        type: "array",
+        items: { type: "string" },
+      },
+    },
+    required: [
+      "mode",
+      "title",
+      "intentSummary",
+      "suggestedReplySubject",
+      "suggestedReply",
+      "missingInformation",
+      "toneNotes",
+    ],
+  };
+}
+
+function translateSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      mode: { type: "string", const: "translate" },
+      title: { type: "string" },
+      targetLanguage: { type: "string" },
+      translatedText: { type: "string" },
+      notes: {
+        type: "array",
+        items: { type: "string" },
+      },
+    },
+    required: ["mode", "title", "targetLanguage", "translatedText", "notes"],
+  };
+}
+
+function safeJsonParse<T>(value: string): T {
+  const trimmed = value.trim();
+
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch {
+    const match = trimmed.match(/\{[\s\S]*\}$/);
+    if (match) {
+      return JSON.parse(match[0]) as T;
     }
+    throw new Error("Model did not return valid JSON");
+  }
+}
 
-    return parsed;
+async function analyzeWithGroq(input: AiDocumentInput): Promise<AiResult> {
+  const schema =
+    input.action === "explain"
+      ? explainSchema()
+      : input.action === "draft-reply"
+        ? draftReplySchema()
+        : translateSchema();
+
+  const instructions = buildInstructions(input);
+
+  const userPrompt =
+    input.action === "explain"
+      ? `Explain the following document in English only.
+Every JSON field except "mode" must be in English.
+
+Document text:
+
+${input.text}`
+      : input.action === "draft-reply"
+        ? `Draft a reply to the following document.
+
+Document text:
+
+${input.text}`
+        : `Translate the following document into ${input.targetLanguage ?? "English"}.
+
+Document text:
+
+${input.text}`;
+
+  const response = await client.chat.completions.create({
+    model,
+    temperature: 0.00000001,
+    messages: [
+      {
+        role: "system",
+        content: instructions,
+      },
+      {
+        role: "user",
+        content: userPrompt,
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "bureaucracy_ai_result",
+        strict: true,
+        schema,
+      },
+    },
+  });
+
+  const output = response.choices[0]?.message?.content;
+  if (!output) {
+    throw new Error("Model returned empty output");
   }
 
-  if (
-    parsed.mode !== "translate" ||
-    !parsed.title ||
-    !parsed.targetLanguage ||
-    !parsed.translatedText ||
-    !Array.isArray(parsed.notes)
-  ) {
-    throw new Error("AI returned an invalid translate result");
+  return safeJsonParse<AiResult>(output);
+}
+
+async function analyzeWithOllama(input: AiDocumentInput): Promise<AiResult> {
+  const schema =
+    input.action === "explain"
+      ? explainSchema()
+      : input.action === "draft-reply"
+        ? draftReplySchema()
+        : translateSchema();
+
+  const instructions = buildInstructions(input);
+
+  const userPrompt =
+    input.action === "explain"
+      ? `Explain the following document in English only.
+Every JSON field except "mode" must be in English.
+
+Document text:
+
+${input.text}`
+      : input.action === "draft-reply"
+        ? `Draft a reply to the following document.
+
+Document text:
+
+${input.text}`
+        : `Translate the following document into ${input.targetLanguage ?? "English"}.
+
+Document text:
+
+${input.text}`;
+
+  const response = await client.responses.create({
+    model,
+    temperature: 0,
+    input: [
+      {
+        role: "system",
+        content: instructions,
+      },
+      {
+        role: "user",
+        content: userPrompt,
+      },
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "bureaucracy_ai_result",
+        strict: true,
+        schema,
+      },
+    },
+  });
+
+  const output = response.output_text;
+  if (!output) {
+    throw new Error("Model returned empty output");
   }
 
-  return parsed;
+  return safeJsonParse<AiResult>(output);
+}
+
+export async function analyzeDocument(
+  input: AiDocumentInput,
+): Promise<AiResult> {
+  if (provider === "groq") {
+    return analyzeWithGroq(input);
+  }
+
+  return analyzeWithOllama(input);
 }
