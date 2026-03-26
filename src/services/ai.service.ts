@@ -1,4 +1,5 @@
-import OpenAI from "openai";
+import { OpenAI } from "openai";
+
 import type { AiDocumentInput } from "../schemas/ai.schema.js";
 
 export type DeadlineItem = {
