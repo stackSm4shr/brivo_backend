@@ -1,12 +1,28 @@
 import { z } from "zod";
 
+const deadlineItemSchema = z.object({
+  label: z.string(),
+  rawText: z.string(),
+  isoDate: z.string().nullable(),
+  confidence: z.enum(["high", "medium", "low"]),
+});
+
+const confirmedDeadlineSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  date: z.string(),
+  rawText: z.string(),
+  createdAt: z.string(),
+  done: z.boolean(),
+});
+
 const explainResultSchema = z.object({
   mode: z.literal("explain"),
   title: z.string(),
   summary: z.string(),
   plainLanguageExplanation: z.string(),
   requiredActions: z.array(z.string()),
-  deadlines: z.array(z.string()),
+  deadlines: z.array(deadlineItemSchema),
   risks: z.array(z.string()),
 });
 
@@ -44,4 +60,12 @@ export const createLetterSchema = z.object({
   aiResult: aiResultSchema,
 });
 
+export const confirmDeadlineSchema = z.object({
+  title: z.string().min(1).max(200),
+  date: z.string().min(1),
+  rawText: z.string().min(1),
+});
+
 export type CreateLetterInput = z.infer<typeof createLetterSchema>;
+export type ConfirmDeadlineInput = z.infer<typeof confirmDeadlineSchema>;
+export type ConfirmedDeadline = z.infer<typeof confirmedDeadlineSchema>;
